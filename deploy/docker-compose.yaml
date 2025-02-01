@@ -1,0 +1,19 @@
+name: "infinitoon"
+services:
+  mongodb:
+    container_name: "mongodb"
+    image: mongo:7
+    env_file: "./config/mongo.env"
+    volumes:
+      - type: bind
+        source: ./data/mongo
+        target: /data/db
+    networks:
+      - infinitoon-be
+
+networks:
+  infinitoon-be:
+    driver: bridge
+
+  infinitoon-fe:
+    driver: bridge
