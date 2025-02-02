@@ -21,4 +21,6 @@ const (
 	AppNameKey AppContextKey = "app_name"
 	// SelfKey is the key used to store the app context in the context.
 	SelfKey AppContextKey = "app_context"
+	// ValidatorKey is the key used to store the validator in the context.
+	ValidatorKey AppContextKey = "validator"
 )

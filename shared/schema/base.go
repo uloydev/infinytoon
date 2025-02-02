@@ -12,3 +12,16 @@ type Base struct {
 	UpdatedAt *time.Time    `bson:"updatedAt,omitempty"`
 	DeletedAt *time.Time    `bson:"deletedAt,omitempty"`
 }
+
+func (b *Base) GetID() string {
+	return b.ID.Hex()
+}
+
+func (b *Base) SetID(id string) error {
+	objectID, err := bson.ObjectIDFromHex(id)
+	if err != nil {
+		return err
+	}
+	b.ID = objectID
+	return nil
+}

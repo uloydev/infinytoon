@@ -2,6 +2,8 @@ package appctx
 
 import (
 	"context"
+
+	"github.com/go-playground/validator/v10"
 )
 
 type AppContext struct {
@@ -50,4 +52,12 @@ func (a *AppContext) GetBool(key AppContextKey) bool {
 
 func (a *AppContext) GetFloat64(key AppContextKey) float64 {
 	return a.ctx.Value(key).(float64)
+}
+
+func (a *AppContext) GetValidator() *validator.Validate {
+	v, ok := a.ctx.Value(ValidatorKey).(*validator.Validate)
+	if !ok || v == nil {
+		return validator.New()
+	}
+	return v
 }

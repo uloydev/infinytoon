@@ -1,16 +1,30 @@
 name: "infinitoon"
 services:
   mongodb:
-    container_name: "mongodb"
-    image: mongo:7
+    image: mongodb/mongodb-community-server:8.0-ubuntu2204
     env_file: "./config/mongo.env"
     volumes:
-      - type: bind
-        source: ./data/mongo
-        target: /data/db
+      - mongo-data:/data/db
     networks:
       - infinitoon-be
+    restart: always
 
+  web:
+    build:
+      context: ./../
+      dockerfile: ./apps/web/Dockerfile
+    image: docker.io/uloydev/infinitoon-web:latest
+    ports:
+      - "54321:8080"
+    networks:
+      - infinitoon-fe
+      - infinitoon-be
+    depends_on:
+      - mongodb
+    restart: unless-stopped
+volumes:
+  mongo-data:
+    driver: local
 networks:
   infinitoon-be:
     driver: bridge

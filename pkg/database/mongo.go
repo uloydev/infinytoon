@@ -1,6 +1,8 @@
 package database
 
 import (
+	"context"
+
 	"go.mongodb.org/mongo-driver/v2/mongo"
 	"go.mongodb.org/mongo-driver/v2/mongo/options"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
@@ -21,6 +23,14 @@ func NewMongoDB(appCtx *appctx.AppContext, uri string) *MongoDB {
 	return db
 }
 
+func GetMongoFromCtx(appCtx *appctx.AppContext) *MongoDB {
+	db := appCtx.Get(appctx.DatabaseKey).(*MongoDB)
+	if db == nil {
+		panic("database is not initialized")
+	}
+	return db
+}
+
 func (m *MongoDB) Connect() error {
 	// Connect to MongoDB
 	client, err := mongo.Connect(options.Client().ApplyURI(m.URI))
@@ -29,7 +39,7 @@ func (m *MongoDB) Connect() error {
 	}
 
 	// Check the connection
-	err = client.Ping(m.appCtx.Context(), nil)
+	err = client.Ping(context.Background(), nil)
 	if err != nil {
 		return err
 	}

@@ -19,3 +19,7 @@ type Tunnel struct {
 	LocalPort string        `bson:"localPort"`
 	Status    TunnelStatus  `bson:"status"`
 }
+
+func (t *Tunnel) CollectionName() string {
+	return "tunnels"
+}

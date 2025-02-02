@@ -7,3 +7,7 @@ type User struct {
 	Password string `bson:"password"`
 	// ApiKey   *string `bson:"apiKey,omitempty"`
 }
+
+func (u *User) CollectionName() string {
+	return "users"
+}
