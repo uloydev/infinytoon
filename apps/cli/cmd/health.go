@@ -8,10 +8,10 @@ import (
 
 var HealthCommand CommandFunc = func(appCtx *appctx.AppContext) *cobra.Command {
 	health := &cobra.Command{
-		Use:   "health",
-		Short: "Check health of your InfiniToon Tunnels",
+		Use:    "health",
+		Short:  "Check health of your InfiniToon Tunnels",
+		PreRun: utils.DefaultPreRun,
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println(utils.Banner)
 			cmd.Println("Checking health of your InfiniToon Tunnels")
 		},
 	}

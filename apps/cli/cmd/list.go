@@ -10,11 +10,11 @@ import (
 var ListCommand CommandFunc = func(appCtx *appctx.AppContext) *cobra.Command {
 	validStatus := []schema.TunnelStatus{schema.TunnelStatusActive, schema.TunnelStatusInactive, schema.TunnelStatusError}
 	list := &cobra.Command{
-		Use:   "list",
-		Short: "List all your tunnels",
-		Long:  "List all your tunnels",
+		Use:    "list",
+		Short:  "List all your tunnels",
+		Long:   "List all your tunnels",
+		PreRun: utils.DefaultPreRun,
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println(utils.Banner)
 			cmd.Println("List all your local http servers")
 			status, err := cmd.Flags().GetString("status")
 			if err != nil {

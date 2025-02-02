@@ -8,11 +8,11 @@ import (
 
 var UpdateCommand CommandFunc = func(appCtx *appctx.AppContext) *cobra.Command {
 	return &cobra.Command{
-		Use:   "update",
-		Short: "Update InfiniToon CLI",
+		Use:    "update",
+		Short:  "Update InfiniToon CLI",
+		PreRun: utils.DefaultPreRun,
 		Run: func(cmd *cobra.Command, args []string) {
 			remoteVersion := "v0.0.1"
-			cmd.Println(utils.Banner)
 			cmd.Printf("Current version : %s\n", utils.Version)
 			cmd.Printf("Remote version  : %s\n", remoteVersion)
 

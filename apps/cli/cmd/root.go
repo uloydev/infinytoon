@@ -20,9 +20,9 @@ var CommandList = []CommandFunc{
 
 func Execute(appCtx *appctx.AppContext) {
 	rootCmd := &cobra.Command{
-		Use: "toon",
+		Use:    "toon",
+		PreRun: utils.DefaultPreRun,
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println(utils.Banner)
 			cmd.Println("This is a CLI tool for InfiniToon, Serve your local http server to Internet with InfiniToon.")
 			cmd.Help()
 		},

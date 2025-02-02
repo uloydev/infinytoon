@@ -8,10 +8,10 @@ import (
 
 var ServeCommand CommandFunc = func(appCtx *appctx.AppContext) *cobra.Command {
 	serve := &cobra.Command{
-		Use:   "serve",
-		Short: "Serve your local http server to Internet securely with InfiniToon",
+		Use:    "serve",
+		Short:  "Serve your local http server to Internet securely with InfiniToon",
+		PreRun: utils.DefaultPreRun,
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println(utils.Banner)
 			// check flags
 			host, err := cmd.Flags().GetString("host")
 			if err != nil {

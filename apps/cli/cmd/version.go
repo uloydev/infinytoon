@@ -8,10 +8,10 @@ import (
 
 var VersionCommand CommandFunc = func(appCtx *appctx.AppContext) *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
-		Short: "Print the version number of InfiniToon CLI",
+		Use:    "version",
+		Short:  "Print the version number of InfiniToon CLI",
+		PreRun: utils.DefaultPreRun,
 		Run: func(cmd *cobra.Command, args []string) {
-			cmd.Println(utils.Banner)
 			cmd.Println("InfiniToon CLI ", utils.Version)
 		},
 	}
