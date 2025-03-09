@@ -1,4 +1,4 @@
-module infinitoon.dev/infinitoon/apps/tunnel
+module infinitoon.dev/infinitoon/apps/relay
 
 go 1.23.5
 

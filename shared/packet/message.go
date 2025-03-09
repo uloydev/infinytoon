@@ -17,6 +17,9 @@ const (
 
 	UDPRequest  MessageType = "udp_rq"
 	UDPResponse MessageType = "udp_rs"
+
+	ErrStream         MessageType = "err_stream"
+	ErrInvalidPayload MessageType = "err_invalid_payload"
 )
 
 type Message struct {
