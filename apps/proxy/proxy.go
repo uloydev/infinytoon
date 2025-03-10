@@ -1,93 +1,85 @@
 package main
 
 import (
-	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"log"
-	"strconv"
-	"sync"
-	"time"
+	"math/big"
+	"os"
 
 	"github.com/quic-go/quic-go"
+	"infinitoon.dev/infinitoon/pkg/cmd"
+	"infinitoon.dev/infinitoon/pkg/container"
+	appctx "infinitoon.dev/infinitoon/pkg/context"
+	"infinitoon.dev/infinitoon/pkg/quictunnel"
 	packets "infinitoon.dev/infinitoon/shared/packet"
 )
 
-type ContextKey string
-
-const (
-	ClientIDKey ContextKey = "clientId"
-)
-
-func startClient(ctx context.Context) {
-	tlsConf := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"quic-echo-example"},
+var streamHandler quictunnel.StreamHandler = func(q quic.Stream, e *json.Encoder, m packets.Message) {
+	log.Printf("Received message: %v", m)
+	if m.Type == packets.EchoRequest {
+		resp := packets.Message{
+			Type:    packets.EchoResponse,
+			Payload: m.Payload,
+		}
+		log.Printf("Sending response: %v", resp)
+		if err := e.Encode(resp); err != nil {
+			log.Printf("Error sending response: %v", err)
+		}
 	}
 
-	conn, err := quic.DialAddr(context.Background(), "localhost:12345", tlsConf, nil)
-	if err != nil {
-		panic(err)
-	}
-	defer conn.CloseWithError(0, "close normal")
-	clientId := ctx.Value(ClientIDKey).(string)
-	log.Printf("[%v] Starting client", clientId)
-	stream, err := conn.OpenStream()
-	if err != nil {
-		log.Fatalf("[%v] Failed to accept stream: %v", clientId, err)
-	}
-
-	log.Printf("[%v] Accepted stream", clientId)
-	defer stream.Close()
-
-	msg, err := packets.NewEchoPayload(clientId).EncodeRq()
-	if err != nil {
-		panic(err)
-	}
-
-	for i := 0; i < 3; i++ {
-		sendMessage(ctx, stream, *msg)
-		time.Sleep(1 * time.Second)
-	}
-
-	log.Printf("[%v] Closing stream", clientId)
-	ctx.Done()
 }
 
 func main() {
+	appCtx := appctx.NewAppContext()
 
-	wg := &sync.WaitGroup{}
-	for i := 1; i <= 3; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			id := strconv.Itoa(i)
-			startClient(context.WithValue(context.Background(), ClientIDKey, "client-"+id))
-		}()
-		time.Sleep(200 * time.Millisecond)
+	ctr := container.NewContainer(appCtx)
+
+	defer ctr.Shutdown()
+
+	ctr.RegisterCommand(cmd.NewQuicCommand(appCtx, cmd.QuicCommandConfig{
+		Clients: []quictunnel.QuicClient{
+			quictunnel.NewQuicClient(appCtx, quictunnel.QuicClientConfig{
+				Name:       "relay client",
+				IP:         "127.0.0.1",
+				Port:       54321,
+				TLSConfing: generateTLSConfig(),
+			}),
+		},
+	}))
+
+	if err := ctr.Run(); err != nil {
+		log.Fatalf("Error running command: %v", err)
 	}
 
-	wg.Wait()
+	signalChan := make(chan os.Signal, 1)
+	<-signalChan
+
 }
 
-func sendMessage(ctx context.Context, stream quic.Stream, message packets.Message) *packets.Message {
-	clientID := ctx.Value(ClientIDKey).(string)
-	encoder := json.NewEncoder(stream)
-	if err := encoder.Encode(message); err != nil {
+func generateTLSConfig() *tls.Config {
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	if err != nil {
 		panic(err)
 	}
-
-	log.Printf("[%v] Sent payload: %v", clientID, string(message.Payload))
-	log.Printf("[%v] Sent message: %+v", clientID, message)
-
-	decoder := json.NewDecoder(stream)
-	var res packets.Message
-	if err := decoder.Decode(&res); err != nil {
+	template := x509.Certificate{SerialNumber: big.NewInt(1)}
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
 		panic(err)
 	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
-	log.Printf("[%v] Received message: %+v", clientID, res)
-	log.Printf("[%v] Received payload: %v", clientID, string(res.Payload))
-
-	return &res
+	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		panic(err)
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{tlsCert},
+		NextProtos:   []string{"quic-echo-example"},
+	}
 }

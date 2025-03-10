@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"sync"
@@ -21,10 +22,12 @@ type QuicClientKey string
 type QuicServerKey string
 
 type QuicTunnel interface {
-	AddClient(ctx context.Context, key QuicClientKey, client QuicClient)
-	AddServer(ctx context.Context, key QuicServerKey, server QuicServer)
+	AddClient(key QuicClientKey, client QuicClient)
+	AddServer(key QuicServerKey, server QuicServer)
 	GetClient(key QuicClientKey) QuicClient
 	GetServer(key QuicServerKey) QuicServer
+	Start()
+	Shutdown()
 }
 
 type quicTunnel struct {
@@ -33,6 +36,7 @@ type quicTunnel struct {
 }
 
 type QuicClient interface {
+	Name() string
 	Setup(ctx context.Context) error
 	SendMessage(ctx context.Context, msg *packets.Message) (*packets.Message, error)
 	Stream(context.Context, StreamHandler)
@@ -40,7 +44,8 @@ type QuicClient interface {
 }
 
 type QuicServer interface {
-	StartServer(ctx context.Context, handler StreamHandler) error
+	Name() string
+	StartServer(ctx context.Context) error
 	SendMessage(ctx context.Context, connKey string, msg *packets.Message) (*packets.Message, error)
 	ShutdownServer(ctx context.Context) error
 }
@@ -52,11 +57,11 @@ func NewQuicTunnel() QuicTunnel {
 	}
 }
 
-func (qt *quicTunnel) AddClient(ctx context.Context, key QuicClientKey, client QuicClient) {
+func (qt *quicTunnel) AddClient(key QuicClientKey, client QuicClient) {
 	qt.clients[key] = client
 }
 
-func (qt *quicTunnel) AddServer(ctx context.Context, key QuicServerKey, server QuicServer) {
+func (qt *quicTunnel) AddServer(key QuicServerKey, server QuicServer) {
 	qt.servers[key] = server
 }
 
@@ -68,19 +73,63 @@ func (qt *quicTunnel) GetServer(key QuicServerKey) QuicServer {
 	return qt.servers[key]
 }
 
+func (qt *quicTunnel) Start() {
+	for k, client := range qt.clients {
+		go func() {
+			log.Printf("starting quic client %s\n", k)
+			if err := client.Setup(context.Background()); err != nil {
+				log.Println(errors.Join(fmt.Errorf("failed to start quic client %s", k), err))
+			}
+			log.Printf("quic client %s started\n", k)
+		}()
+	}
+
+	for k, server := range qt.servers {
+		go func() {
+			log.Printf("starting quic server %s\n", k)
+			if err := server.StartServer(context.Background()); err != nil {
+				log.Println(errors.Join(fmt.Errorf("failed to start quic server %s", k), err))
+			}
+		}()
+	}
+}
+
+func (qt *quicTunnel) Shutdown() {
+	for k, client := range qt.clients {
+		log.Printf("shutting down quic client %s\n", k)
+		if err := client.ShutdownClient(context.Background()); err != nil {
+			log.Println(errors.Join(fmt.Errorf("failed to shutdown quic client %s", k), err))
+			continue
+		}
+		log.Printf("quic client %s shutdown\n", k)
+	}
+
+	for k, server := range qt.servers {
+		log.Printf("shutting down quic server %s\n", k)
+		if err := server.ShutdownServer(context.Background()); err != nil {
+			log.Println(errors.Join(fmt.Errorf("failed to shutdown quic server %s", k), err))
+			continue
+		}
+		log.Printf("quic server %s shutdown\n", k)
+	}
+}
+
 type QuicClientConfig struct {
+	Name       string
 	IP         string
 	Port       int
 	TLSConfing *tls.Config
 }
 
 type QuicServerConfig struct {
+	Name       string
 	IP         string
 	Port       int
 	TLSConfing *tls.Config
 }
 
 type quicClient struct {
+	appCtx   *appctx.AppContext
 	cfg      QuicClientConfig
 	udpConn  *net.UDPConn
 	quicConn quic.Connection
@@ -91,8 +140,13 @@ type quicClient struct {
 
 func NewQuicClient(appCtx *appctx.AppContext, cfg QuicClientConfig) QuicClient {
 	return &quicClient{
-		cfg: cfg,
+		appCtx: appCtx,
+		cfg:    cfg,
 	}
+}
+
+func (qc *quicClient) Name() string {
+	return qc.cfg.Name
 }
 
 func (qc *quicClient) Setup(ctx context.Context) error {
@@ -168,6 +222,7 @@ func (qc *quicClient) ShutdownClient(ctx context.Context) error {
 }
 
 type quicServer struct {
+	appCtx       *appctx.AppContext
 	cfg          QuicServerConfig
 	udpConn      *net.UDPConn
 	quicListener *quic.Listener
@@ -175,11 +230,17 @@ type quicServer struct {
 	handler      StreamHandler
 }
 
-func NewQuicServer(appCtx *appctx.AppContext, cfg QuicServerConfig) QuicServer {
+func NewQuicServer(appCtx *appctx.AppContext, cfg QuicServerConfig, handler StreamHandler) QuicServer {
 	return &quicServer{
+		appCtx:  appCtx,
 		cfg:     cfg,
 		Clients: &sync.Map{},
+		handler: handler,
 	}
+}
+
+func (qs *quicServer) Name() string {
+	return qs.cfg.Name
 }
 
 func (qs *quicServer) SendMessage(ctx context.Context, connKey string, msg *packets.Message) (*packets.Message, error) {
@@ -202,7 +263,7 @@ func (qs *quicServer) SendMessage(ctx context.Context, connKey string, msg *pack
 	return sendMessage(ctx, json.NewEncoder(stream), json.NewDecoder(stream), msg)
 }
 
-func (qs *quicServer) StartServer(ctx context.Context, handler StreamHandler) error {
+func (qs *quicServer) StartServer(ctx context.Context) error {
 	addr := &net.UDPAddr{
 		IP:   net.ParseIP(qs.cfg.IP),
 		Port: qs.cfg.Port,
@@ -222,9 +283,6 @@ func (qs *quicServer) StartServer(ctx context.Context, handler StreamHandler) er
 	qs.quicListener = quicLs
 
 	log.Printf("Listening on %v", quicLs.Addr())
-
-	qs.handler = handler
-
 	for {
 		clientConn, err := qs.quicListener.Accept(ctx)
 		if err != nil {
@@ -265,5 +323,17 @@ func (qs *quicServer) connHandler(conn quic.Connection) {
 }
 
 func (qs *quicServer) ShutdownServer(ctx context.Context) error {
-	return qs.udpConn.Close()
+	if qs.quicListener != nil {
+		if err := qs.quicListener.Close(); err != nil {
+			return err
+		}
+	}
+
+	if qs.udpConn != nil {
+		if err := qs.udpConn.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

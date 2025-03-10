@@ -23,4 +23,6 @@ const (
 	SelfKey AppContextKey = "app_context"
 	// ValidatorKey is the key used to store the validator in the context.
 	ValidatorKey AppContextKey = "validator"
+	// QuicTunnelKey is the key used to store the quic tunnel in the context.
+	QuicTunnelKey AppContextKey = "quic_tunnel"
 )

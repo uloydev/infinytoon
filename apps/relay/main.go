@@ -1,135 +1,63 @@
 package main
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
-	"io"
 	"log"
 	"math/big"
-	"net"
+	"os"
 
 	"github.com/quic-go/quic-go"
+	"infinitoon.dev/infinitoon/pkg/cmd"
+	"infinitoon.dev/infinitoon/pkg/container"
+	appctx "infinitoon.dev/infinitoon/pkg/context"
+	"infinitoon.dev/infinitoon/pkg/quictunnel"
 	packets "infinitoon.dev/infinitoon/shared/packet"
 )
 
-func handleSession(sess quic.Connection) {
-	log.Printf("New session: %v", sess.RemoteAddr())
-
-	stream, err := sess.AcceptStream(context.Background())
-	if err != nil {
-		panic(err)
+var serverSessionHandler quictunnel.StreamHandler = func(q quic.Stream, e *json.Encoder, m packets.Message) {
+	log.Printf("Received message: %v", m)
+	if m.Type == packets.EchoRequest {
+		resp := packets.Message{
+			Type:    packets.EchoResponse,
+			Payload: m.Payload,
+		}
+		log.Printf("Sending response: %v", resp)
+		if err := e.Encode(resp); err != nil {
+			log.Printf("Error sending response: %v", err)
+		}
 	}
 
-	decoder := json.NewDecoder(stream)
-	encoder := json.NewEncoder(stream)
-
-	for {
-		// check if client has closed the session
-		select {
-		case <-sess.Context().Done():
-			log.Printf("Session closed: %v", sess.RemoteAddr())
-			return
-		default:
-		}
-
-		var (
-			req packets.Message
-			res *packets.Message
-		)
-		if err := decoder.Decode(&req); err != nil {
-			handleApplicationError(sess, err)
-			return
-		}
-
-		log.Printf("[%v] Received message: %+v", sess.RemoteAddr(), req)
-
-		switch req.Type {
-		case packets.EchoRequest:
-			var echoReq packets.EchoPayload
-			if err := echoReq.DecodeRq(&req); err != nil {
-				handleApplicationError(sess, err)
-				return
-			}
-			log.Printf("[%v] Received echo payload: %v", sess.RemoteAddr(), string(req.Payload))
-
-			res, err = echoReq.EncodeRs()
-			if err != nil {
-				handleApplicationError(sess, err)
-				return
-			}
-			if err := encoder.Encode(res); err != nil {
-				handleApplicationError(sess, err)
-				return
-			}
-			log.Printf("[%v] Sent echo response: %v", sess.RemoteAddr(), string(req.Payload))
-		default:
-		}
-
-		log.Printf("[%v] Sent message: %+v", sess.RemoteAddr(), req)
-	}
-}
-
-func handleApplicationError(sess quic.Connection, err error) {
-
-	switch err := err.(type) {
-	case *quic.ApplicationError:
-		if err.ErrorCode == 0x0 {
-			log.Printf("[%v] Client closed session", sess.RemoteAddr())
-			return
-		}
-
-	case *quic.StreamError:
-		if err.ErrorCode == 0x0 {
-			log.Printf("[%v] Client closed stream", sess.RemoteAddr())
-			return
-		}
-
-	default:
-		if err == io.EOF {
-			log.Printf("[%v] Client closed stream", sess.RemoteAddr())
-			return
-		}
-
-		log.Printf("[%v] Client Error: %v", sess.RemoteAddr(), err)
-	}
 }
 
 func main() {
-	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{
-		Port: 12345,
-		IP:   net.IPv4(127, 0, 0, 1),
-	})
-	if err != nil {
-		panic(err)
+	appCtx := appctx.NewAppContext()
+
+	ctr := container.NewContainer(appCtx)
+
+	defer ctr.Shutdown()
+
+	ctr.RegisterCommand(cmd.NewQuicCommand(appCtx, cmd.QuicCommandConfig{
+		Servers: []quictunnel.QuicServer{
+			quictunnel.NewQuicServer(appCtx, quictunnel.QuicServerConfig{
+				Name:       "relay server",
+				IP:         "127.0.0.1",
+				Port:       54321,
+				TLSConfing: generateTLSConfig(),
+			}, serverSessionHandler),
+		},
+	}))
+
+	if err := ctr.Run(); err != nil {
+		log.Fatalf("Error running command: %v", err)
 	}
 
-	tr := quic.Transport{
-		Conn: udpConn,
-	}
-
-	quicConn, err := tr.Listen(generateTLSConfig(), &quic.Config{
-		MaxIncomingStreams: 1000,
-	})
-	if err != nil {
-		panic(err)
-	}
-
-	log.Printf("Listening on %v", quicConn.Addr())
-
-	for {
-		sess, err := quicConn.Accept(context.Background())
-		if err != nil {
-			handleApplicationError(sess, err)
-			panic(err)
-		}
-
-		go handleSession(sess)
-	}
+	signalChan := make(chan os.Signal, 1)
+	<-signalChan
 }
 
 func generateTLSConfig() *tls.Config {
