@@ -2,10 +2,11 @@ app_name: "relay"
 app_version: "0.1.0"
 app_env: "development"
 
-server: 
-  name: "relay-server"
-  ip: "127.0.0.1"
-  port: 13371
+clients: 
+  - name: "relay-client"
+    ip: "127.0.0.1"
+    port: 13371
+
 
 logger:
   output: "console"

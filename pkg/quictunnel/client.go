@@ -12,10 +12,10 @@ import (
 
 	"github.com/quic-go/quic-go"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
-	packets "infinitoon.dev/infinitoon/shared/packet"
+	"infinitoon.dev/infinitoon/shared/packets"
 )
 
-type StreamHandler func(quic.Stream, *json.Encoder, packets.Message)
+type StreamHandler func(*appctx.AppContext, quic.Stream, *json.Encoder, packets.Message)
 type ConnHandler func(quic.Connection)
 
 type QuicClientKey string
@@ -115,16 +115,16 @@ func (qt *quicTunnel) Shutdown() {
 }
 
 type QuicClientConfig struct {
-	Name       string
-	IP         string
-	Port       int
+	Name       string `mapstructure:"name"`
+	IP         string `mapstructure:"ip"`
+	Port       int    `mapstructure:"port"`
 	TLSConfing *tls.Config
 }
 
 type QuicServerConfig struct {
-	Name       string
-	IP         string
-	Port       int
+	Name       string `mapstructure:"name"`
+	IP         string `mapstructure:"ip"`
+	Port       int    `mapstructure:"port"`
 	TLSConfing *tls.Config
 }
 
@@ -210,7 +210,7 @@ func (qc *quicClient) Stream(ctx context.Context, handler StreamHandler) {
 			res.ClientID = stream.StreamID().InitiatedBy().String()
 			encoder.Encode(res)
 		}
-		go handler(stream, encoder, req)
+		go handler(qc.appCtx, stream, encoder, req)
 	}
 }
 
@@ -318,7 +318,7 @@ func (qs *quicServer) connHandler(conn quic.Connection) {
 			encoder.Encode(res)
 		}
 
-		go qs.handler(stream, encoder, req)
+		go qs.handler(qs.appCtx, stream, encoder, req)
 	}
 }
 

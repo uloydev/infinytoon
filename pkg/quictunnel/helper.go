@@ -7,7 +7,7 @@ import (
 	"log"
 
 	"github.com/quic-go/quic-go"
-	packets "infinitoon.dev/infinitoon/shared/packet"
+	"infinitoon.dev/infinitoon/shared/packets"
 )
 
 func sendMessage(

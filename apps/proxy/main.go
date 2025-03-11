@@ -5,55 +5,31 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/json"
 	"encoding/pem"
-	"log"
 	"math/big"
 	"os"
 
-	"github.com/quic-go/quic-go"
 	"infinitoon.dev/infinitoon/pkg/cmd"
 	"infinitoon.dev/infinitoon/pkg/container"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
-	"infinitoon.dev/infinitoon/pkg/quictunnel"
-	packets "infinitoon.dev/infinitoon/shared/packet"
+	"infinitoon.dev/infinitoon/pkg/logger"
 )
-
-var streamHandler quictunnel.StreamHandler = func(q quic.Stream, e *json.Encoder, m packets.Message) {
-	log.Printf("Received message: %v", m)
-	if m.Type == packets.EchoRequest {
-		resp := packets.Message{
-			Type:    packets.EchoResponse,
-			Payload: m.Payload,
-		}
-		log.Printf("Sending response: %v", resp)
-		if err := e.Encode(resp); err != nil {
-			log.Printf("Error sending response: %v", err)
-		}
-	}
-
-}
 
 func main() {
 	appCtx := appctx.NewAppContext()
+	cfg := InitConfig(appCtx)
+	log := logger.NewLogger(appCtx, cfg.Logger)
 
 	ctr := container.NewContainer(appCtx)
 
 	defer ctr.Shutdown()
 
 	ctr.RegisterCommand(cmd.NewQuicCommand(appCtx, cmd.QuicCommandConfig{
-		Clients: []quictunnel.QuicClient{
-			quictunnel.NewQuicClient(appCtx, quictunnel.QuicClientConfig{
-				Name:       "relay client",
-				IP:         "127.0.0.1",
-				Port:       54321,
-				TLSConfing: generateTLSConfig(),
-			}),
-		},
+		Clients: InitClients(appCtx),
 	}))
 
 	if err := ctr.Run(); err != nil {
-		log.Fatalf("Error running command: %v", err)
+		log.Fatal().Err(err).Msg("error running command")
 	}
 
 	signalChan := make(chan os.Signal, 1)

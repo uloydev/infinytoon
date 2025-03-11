@@ -17,11 +17,14 @@ type QuicCommandConfig struct {
 }
 
 func NewQuicCommand(appCtx *appctx.AppContext, cfg QuicCommandConfig) Command {
-	return &QuicCommand{
+	c := &QuicCommand{
 		appCtx: appCtx,
 		app:    quictunnel.NewQuicTunnel(),
 		cfg:    cfg,
 	}
+
+	appCtx.Set(appctx.QuicTunnelKey, c.app)
+	return c
 }
 
 func (q *QuicCommand) Name() string {
