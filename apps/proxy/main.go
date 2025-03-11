@@ -28,6 +28,8 @@ func main() {
 		Clients: InitClients(appCtx),
 	}))
 
+	ctr.RegisterCommand(InitHttpProxy(appCtx))
+
 	if err := ctr.Run(); err != nil {
 		log.Fatal().Err(err).Msg("error running command")
 	}

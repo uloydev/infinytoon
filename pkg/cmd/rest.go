@@ -13,10 +13,10 @@ type RestCommand struct {
 }
 
 type RestCommandConfig struct {
-	Name        string
-	Host        string
-	Port        string
-	BasePath    string
+	Name        string `mapstructure:"name"`
+	Host        string `mapstructure:"host"`
+	Port        string `mapstructure:"port"`
+	BasePath    string `mapstructure:"base_path"`
 	Middlewares []fiber.Handler
 	Routes      []*rest.RestRoute
 }
