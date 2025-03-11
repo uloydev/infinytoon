@@ -15,9 +15,12 @@ func RootHandler(appCtx *appctx.AppContext, stream quic.Stream, encoder *json.En
 
 	log.Info().Any("payload", msg).Msg("message received")
 	if msg.Type == packets.EchoRequest {
-		resp := packets.Message{
-			Type:    packets.EchoResponse,
-			Payload: msg.Payload,
+		payload := packets.NewEchoPayload(msg.ClientID)
+		resp, err := payload.EncodeRs()
+		if err != nil {
+			log.Error().Err(err).Any("client", msg.ClientID).Msg("error encoding echo response")
+			resp = &msg
+			resp.Type = packets.ErrInvalidPayload
 		}
 		log.Info().Any("payload", resp).Msg("sending response")
 		if err := encoder.Encode(resp); err != nil {

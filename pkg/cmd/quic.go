@@ -19,7 +19,7 @@ type QuicCommandConfig struct {
 func NewQuicCommand(appCtx *appctx.AppContext, cfg QuicCommandConfig) Command {
 	c := &QuicCommand{
 		appCtx: appCtx,
-		app:    quictunnel.NewQuicTunnel(),
+		app:    quictunnel.NewQuicTunnel(appCtx),
 		cfg:    cfg,
 	}
 

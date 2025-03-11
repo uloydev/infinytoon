@@ -5,13 +5,13 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"log"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/quic-go/quic-go"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
+	"infinitoon.dev/infinitoon/pkg/logger"
 	"infinitoon.dev/infinitoon/shared/packets"
 )
 
@@ -31,6 +31,8 @@ type QuicTunnel interface {
 }
 
 type quicTunnel struct {
+	appCtx  *appctx.AppContext
+	log     *logger.Logger
 	clients map[QuicClientKey]QuicClient
 	servers map[QuicServerKey]QuicServer
 }
@@ -50,8 +52,10 @@ type QuicServer interface {
 	ShutdownServer(ctx context.Context) error
 }
 
-func NewQuicTunnel() QuicTunnel {
+func NewQuicTunnel(appCtx *appctx.AppContext) QuicTunnel {
 	return &quicTunnel{
+		appCtx:  appCtx,
+		log:     appCtx.Get(appctx.LoggerKey).(*logger.Logger),
 		clients: make(map[QuicClientKey]QuicClient),
 		servers: make(map[QuicServerKey]QuicServer),
 	}
@@ -75,42 +79,44 @@ func (qt *quicTunnel) GetServer(key QuicServerKey) QuicServer {
 
 func (qt *quicTunnel) Start() {
 	for k, client := range qt.clients {
-		go func() {
-			log.Printf("starting quic client %s\n", k)
+		go func(k QuicClientKey, client QuicClient) {
+			qt.log.Info().Any("client", k).Msg("starting quic client")
 			if err := client.Setup(context.Background()); err != nil {
-				log.Println(errors.Join(fmt.Errorf("failed to start quic client %s", k), err))
+				qt.log.Error().Err(err).Any("client", k).Msg("failed to start quic client")
+				return
 			}
-			log.Printf("quic client %s started\n", k)
-		}()
+			qt.log.Info().Any("client", k).Msg("quic client started")
+		}(k, client)
 	}
 
 	for k, server := range qt.servers {
-		go func() {
-			log.Printf("starting quic server %s\n", k)
+		go func(k QuicServerKey, server QuicServer) {
+			qt.log.Info().Any("server", k).Msg("starting quic server")
 			if err := server.StartServer(context.Background()); err != nil {
-				log.Println(errors.Join(fmt.Errorf("failed to start quic server %s", k), err))
+				qt.log.Error().Err(err).Any("server", k).Msg("failed to start quic server")
+				return
 			}
-		}()
+		}(k, server)
 	}
 }
 
 func (qt *quicTunnel) Shutdown() {
 	for k, client := range qt.clients {
-		log.Printf("shutting down quic client %s\n", k)
+		qt.log.Info().Any("client", k).Msg("shutting down quic client")
 		if err := client.ShutdownClient(context.Background()); err != nil {
-			log.Println(errors.Join(fmt.Errorf("failed to shutdown quic client %s", k), err))
+			qt.log.Error().Err(err).Any("client", k).Msg("failed to shutdown quic client")
 			continue
 		}
-		log.Printf("quic client %s shutdown\n", k)
+		qt.log.Info().Any("client", k).Msg("quic client shutdown")
 	}
 
 	for k, server := range qt.servers {
-		log.Printf("shutting down quic server %s\n", k)
+		qt.log.Info().Any("server", k).Msg("shutting down quic server")
 		if err := server.ShutdownServer(context.Background()); err != nil {
-			log.Println(errors.Join(fmt.Errorf("failed to shutdown quic server %s", k), err))
+			qt.log.Error().Err(err).Any("server", k).Msg("failed to shutdown quic server")
 			continue
 		}
-		log.Printf("quic server %s shutdown\n", k)
+		qt.log.Info().Any("server", k).Msg("quic server shutdown")
 	}
 }
 
@@ -130,6 +136,7 @@ type QuicServerConfig struct {
 
 type quicClient struct {
 	appCtx   *appctx.AppContext
+	log      *logger.Logger
 	cfg      QuicClientConfig
 	udpConn  *net.UDPConn
 	quicConn quic.Connection
@@ -141,6 +148,7 @@ type quicClient struct {
 func NewQuicClient(appCtx *appctx.AppContext, cfg QuicClientConfig) QuicClient {
 	return &quicClient{
 		appCtx: appCtx,
+		log:    appCtx.Get(appctx.LoggerKey).(*logger.Logger),
 		cfg:    cfg,
 	}
 }
@@ -150,41 +158,65 @@ func (qc *quicClient) Name() string {
 }
 
 func (qc *quicClient) Setup(ctx context.Context) error {
-	addr := &net.UDPAddr{
-		IP:   net.ParseIP(qc.cfg.IP),
-		Port: qc.cfg.Port,
+	for {
+
+		addr := &net.UDPAddr{
+			IP:   net.ParseIP(qc.cfg.IP),
+			Port: qc.cfg.Port,
+		}
+
+		quicConn, err := quic.DialAddr(ctx, addr.String(), qc.cfg.TLSConfing, &quic.Config{
+			KeepAlivePeriod: 10 * time.Minute,
+		})
+		if err != nil {
+			qc.log.Error().Err(err).Any("client", qc.cfg.Name).Msg("failed to dial quic address, retrying...")
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		qc.quicConn = quicConn
+
+		stream, err := quicConn.OpenStream()
+		if err != nil {
+			qc.log.Error().Err(err).Any("client", qc.cfg.Name).Msg("failed to open stream, retrying...")
+			time.Sleep(5 * time.Second)
+			continue
+		}
+
+		qc.stream = stream
+
+		qc.encoder = json.NewEncoder(stream)
+		qc.decoder = json.NewDecoder(stream)
+
+		go qc.echo()
+
+		return nil
 	}
-	udpConn, err := net.DialUDP("udp", nil, addr)
+}
+
+func (qc *quicClient) echo() {
+	qc.sendEcho(time.Now())
+	//  send echo every minute
+	tick := time.NewTicker(time.Minute)
+	for t := range tick.C {
+		qc.sendEcho(t)
+	}
+}
+
+func (qc *quicClient) sendEcho(t time.Time) {
+	echo := packets.NewEchoPayload(qc.cfg.Name)
+	echoRq, err := echo.EncodeRq()
 	if err != nil {
-		return err
+		qc.log.Error().Err(err).Any("client", qc.cfg.Name).Msg("error encoding echo message")
+		return
 	}
-
-	tr := &quic.Transport{
-		Conn: udpConn,
-	}
-
-	quicConn, err := tr.Dial(ctx, addr, qc.cfg.TLSConfing, &quic.Config{})
+	qc.log.Info().Any("client", qc.cfg.Name).Any("payload", echoRq).Any("time", t).Msg("sending echo message")
+	res, err := qc.SendMessage(context.Background(), echoRq)
 	if err != nil {
-		return err
+		qc.log.Error().Err(err).Any("client", qc.cfg.Name).Msg("error sending echo message")
+		return
 	}
-
-	quicConn.CloseWithError(0, "close normal")
-
-	qc.udpConn = udpConn
-	qc.quicConn = quicConn
-
-	stream, err := quicConn.OpenStream()
-	if err != nil {
-		return err
-	}
-
-	qc.stream = stream
-
-	qc.encoder = json.NewEncoder(stream)
-	qc.decoder = json.NewDecoder(stream)
-
-	return nil
-
+	qc.log.Info().Any("client", qc.cfg.Name).Any("payload", res).Any("time", t).Msg("echo response received")
 }
 
 func (qc *quicClient) SendMessage(ctx context.Context, msg *packets.Message) (*packets.Message, error) {
@@ -195,7 +227,8 @@ func (qc *quicClient) Stream(ctx context.Context, handler StreamHandler) {
 	for {
 		stream, err := qc.quicConn.AcceptStream(ctx)
 		if err != nil {
-			handleStreamError(stream, err)
+			handleStreamError(qc.log, qc.quicConn.RemoteAddr().String(), err)
+			continue
 		}
 
 		encoder := json.NewEncoder(stream)
@@ -205,7 +238,7 @@ func (qc *quicClient) Stream(ctx context.Context, handler StreamHandler) {
 			req, res packets.Message
 		)
 		if err := decoder.Decode(&req); err != nil {
-			log.Println(err)
+			qc.log.Error().Any("client", qc.cfg.Name).Any("streamID", stream.StreamID()).Err(err).Msg("error decoding message")
 			res.Type = packets.ErrInvalidPayload
 			res.ClientID = stream.StreamID().InitiatedBy().String()
 			encoder.Encode(res)
@@ -215,14 +248,21 @@ func (qc *quicClient) Stream(ctx context.Context, handler StreamHandler) {
 }
 
 func (qc *quicClient) ShutdownClient(ctx context.Context) error {
-	if err := qc.stream.Close(); err != nil {
-		return err
+	if qc.stream != nil {
+		if err := qc.stream.Close(); err != nil {
+			return err
+		}
 	}
-	return qc.udpConn.Close()
+
+	if qc.quicConn != nil {
+		return qc.quicConn.CloseWithError(0, "close normal")
+	}
+	return nil
 }
 
 type quicServer struct {
 	appCtx       *appctx.AppContext
+	log          *logger.Logger
 	cfg          QuicServerConfig
 	udpConn      *net.UDPConn
 	quicListener *quic.Listener
@@ -233,6 +273,7 @@ type quicServer struct {
 func NewQuicServer(appCtx *appctx.AppContext, cfg QuicServerConfig, handler StreamHandler) QuicServer {
 	return &quicServer{
 		appCtx:  appCtx,
+		log:     appCtx.Get(appctx.LoggerKey).(*logger.Logger),
 		cfg:     cfg,
 		Clients: &sync.Map{},
 		handler: handler,
@@ -276,13 +317,15 @@ func (qs *quicServer) StartServer(ctx context.Context) error {
 
 	qs.udpConn = udpConn
 
-	quicLs, err := quic.Listen(udpConn, qs.cfg.TLSConfing, &quic.Config{})
+	quicLs, err := quic.Listen(udpConn, qs.cfg.TLSConfing, &quic.Config{
+		KeepAlivePeriod: 10 * time.Minute,
+	})
 	if err != nil {
 		return err
 	}
 	qs.quicListener = quicLs
 
-	log.Printf("Listening on %v", quicLs.Addr())
+	qs.log.Info().Any("server", qs.cfg.Name).Any("address", quicLs.Addr()).Msg("quic server listening")
 	for {
 		clientConn, err := qs.quicListener.Accept(ctx)
 		if err != nil {
@@ -297,28 +340,49 @@ func (qs *quicServer) StartServer(ctx context.Context) error {
 }
 
 func (qs *quicServer) connHandler(conn quic.Connection) {
-	log.Printf("New session: %v", conn.RemoteAddr())
+	qs.log.Info().Any("server", qs.cfg.Name).Any("client", conn.RemoteAddr()).Msg("new client connected to server")
 
 	for {
 		stream, err := conn.AcceptStream(context.Background())
 		if err != nil {
-			panic(err)
+			handleStreamError(qs.log, conn.RemoteAddr().String(), err)
+
+			// remove client connection from map
+			qs.Clients.Delete(conn.RemoteAddr().String())
+			qs.log.Info().Any("server", qs.cfg.Name).Any("client", conn.RemoteAddr()).Msg("client disconnected")
+			break
 		}
 
 		decoder := json.NewDecoder(stream)
 		encoder := json.NewEncoder(stream)
 
-		var (
-			req, res packets.Message
-		)
-		if err := decoder.Decode(&req); err != nil {
-			log.Println(err)
-			res.Type = packets.ErrInvalidPayload
-			res.ClientID = stream.StreamID().InitiatedBy().String()
-			encoder.Encode(res)
-		}
+		for {
+			// check if stream is closed
+			if _, err := stream.Read(nil); err != nil {
+				handleStreamError(qs.log, conn.RemoteAddr().String(), err)
+				break
+			}
 
-		go qs.handler(qs.appCtx, stream, encoder, req)
+			var (
+				req, res packets.Message
+			)
+			if err := decoder.Decode(&req); err != nil {
+
+				// check if err timeout: no recent network activity
+				if err.Error() == "timeout: no recent network activity" {
+					qs.log.Info().Any("server", qs.cfg.Name).Any("client", conn.RemoteAddr()).Msg("client idle timeout")
+					break
+				}
+
+				qs.log.Error().Any("server", qs.cfg.Name).Any("client", conn.RemoteAddr()).Any("streamID", stream.StreamID()).Err(err).Msg("error decoding message")
+				res.Type = packets.ErrInvalidPayload
+				res.ClientID = stream.StreamID().InitiatedBy().String()
+				encoder.Encode(res)
+			}
+			go func() {
+				qs.handler(qs.appCtx, stream, encoder, req)
+			}()
+		}
 	}
 }
 

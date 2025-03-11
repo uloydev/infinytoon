@@ -7,6 +7,7 @@ import (
 	"log"
 
 	"github.com/quic-go/quic-go"
+	"infinitoon.dev/infinitoon/pkg/logger"
 	"infinitoon.dev/infinitoon/shared/packets"
 )
 
@@ -43,6 +44,11 @@ func handleConnError(sess quic.Connection, err error) {
 			return
 		}
 
+	// handle idle connection
+	case *quic.IdleTimeoutError:
+		log.Printf("[%v] Client idle timeout", sess.RemoteAddr())
+		return
+
 	default:
 		if err == io.EOF {
 			log.Printf("[%v] Client closed stream", sess.RemoteAddr())
@@ -53,27 +59,27 @@ func handleConnError(sess quic.Connection, err error) {
 	}
 }
 
-func handleStreamError(sess quic.Stream, err error) {
+func handleStreamError(log *logger.Logger, connAddr string, err error) {
 
 	switch err := err.(type) {
 	case *quic.ApplicationError:
 		if err.ErrorCode == 0x0 {
-			log.Printf("[%v] Client closed session", sess.StreamID())
+			log.Warn().Err(err).Msgf("[%v] Client closed session", connAddr)
 			return
 		}
 
 	case *quic.StreamError:
 		if err.ErrorCode == 0x0 {
-			log.Printf("[%v] Client closed stream", sess.StreamID())
+			log.Warn().Err(err).Msgf("[%v] Client closed stream", connAddr)
 			return
 		}
 
 	default:
 		if err == io.EOF {
-			log.Printf("[%v] Client closed stream", sess.StreamID())
+			log.Warn().Err(err).Msgf("[%v] Client closed stream", connAddr)
 			return
 		}
 
-		log.Printf("[%v] Client Error: %v", sess.StreamID(), err)
+		log.Warn().Err(err).Msgf("[%v] Client Error", connAddr)
 	}
 }

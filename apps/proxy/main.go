@@ -57,7 +57,8 @@ func generateTLSConfig() *tls.Config {
 		panic(err)
 	}
 	return &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		NextProtos:   []string{"quic-echo-example"},
+		Certificates:       []tls.Certificate{tlsCert},
+		NextProtos:         []string{"quic-echo-example"},
+		InsecureSkipVerify: true,
 	}
 }
