@@ -5,8 +5,6 @@ type BasePayload struct {
 }
 
 type Payload interface {
-	EncodeRq() (*Message, error)
-	EncodeRs() (*Message, error)
-	DecodeRq(*Message) error
-	DecodeRs(*Message) error
+	Encode() (*Message, error)
+	Decode(*Message) error
 }

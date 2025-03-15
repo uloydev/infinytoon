@@ -7,55 +7,78 @@ type EchoPayload struct {
 	Message string `json:"message"`
 }
 
-func NewEchoPayload(clientId string) Payload {
-	return &EchoPayload{
-		Message: "echo",
-		BasePayload: BasePayload{
-			ClientID: clientId,
+type EchoRq struct {
+	EchoPayload
+}
+
+type EchoRs struct {
+	EchoPayload
+}
+
+func NewEchoRq(clientID string) Payload {
+	return &EchoRq{
+		EchoPayload: EchoPayload{
+			BasePayload: BasePayload{
+				ClientID: clientID,
+			},
+			Message: "echo request",
 		},
 	}
 }
 
-func (p *EchoPayload) EncodeRq() (*Message, error) {
-	payload, err := json.Marshal(p)
+func NewEchoRs(clientID string) Payload {
+	return &EchoRs{
+		EchoPayload: EchoPayload{
+			BasePayload: BasePayload{
+				ClientID: clientID,
+			},
+			Message: "echo response",
+		},
+	}
+}
+
+func (rq *EchoRq) Encode() (*Message, error) {
+	payload, err := json.Marshal(rq)
 	if err != nil {
 		return nil, err
 	}
-
 	return &Message{
-		ClientID: p.ClientID,
 		Type:     EchoRequest,
+		ClientID: rq.ClientID,
 		Payload:  payload,
 	}, nil
 }
 
-func (p *EchoPayload) EncodeRs() (*Message, error) {
-	payload, err := json.Marshal(p)
+func (rq *EchoRq) Decode(msg *Message) error {
+	if msg.Type != EchoRequest {
+		return ErrInvalidMessageType
+	}
+	err := json.Unmarshal(msg.Payload, rq)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (rs *EchoRs) Encode() (*Message, error) {
+	payload, err := json.Marshal(rs)
 	if err != nil {
 		return nil, err
 	}
-
 	return &Message{
-		ClientID: p.ClientID,
 		Type:     EchoResponse,
+		ClientID: rs.ClientID,
 		Payload:  payload,
 	}, nil
 }
 
-func (p *EchoPayload) DecodeRq(m *Message) error {
-	p.ClientID = m.ClientID
-	if m.Type != EchoRequest {
+func (rs *EchoRs) Decode(msg *Message) error {
+	if msg.Type != EchoResponse {
 		return ErrInvalidMessageType
 	}
-
-	return json.Unmarshal(m.Payload, p)
-}
-
-func (p *EchoPayload) DecodeRs(m *Message) error {
-	p.ClientID = m.ClientID
-	if m.Type != EchoResponse {
-		return ErrInvalidMessageType
+	err := json.Unmarshal(msg.Payload, rs)
+	if err != nil {
+		return err
 	}
-
-	return json.Unmarshal(m.Payload, p)
+	return nil
 }

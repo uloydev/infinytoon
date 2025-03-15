@@ -1,13 +1,14 @@
 package main
 
 import (
+	"infinitoon.dev/infinitoon/apps/relay/config"
 	"infinitoon.dev/infinitoon/apps/relay/handler"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
 	"infinitoon.dev/infinitoon/pkg/quictunnel"
 )
 
 func InitServers(appCtx *appctx.AppContext) []quictunnel.QuicServer {
-	cfg := appCtx.Get(appctx.ConfigKey).(*Config)
+	cfg := appCtx.Get(appctx.ConfigKey).(*config.Config)
 	servers := []quictunnel.QuicServer{
 		quictunnel.NewQuicServer(appCtx, quictunnel.QuicServerConfig{
 			Name:       cfg.Server.Name,

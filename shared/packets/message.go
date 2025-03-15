@@ -18,12 +18,25 @@ const (
 	UDPRequest  MessageType = "udp_rq"
 	UDPResponse MessageType = "udp_rs"
 
+	ServeRequest  MessageType = "serve_rq"
+	ServeResponse MessageType = "serve_rs"
+
 	ErrStream         MessageType = "err_stream"
 	ErrInvalidPayload MessageType = "err_invalid_payload"
 )
 
+type Instance string
+
+const (
+	CLIENT_INSTANCE Instance = "client"
+	RELAY_INSTANCE  Instance = "relay"
+	PROXY_INSTANCE  Instance = "proxy"
+)
+
 type Message struct {
-	Type     MessageType `json:"type"`
-	ClientID string      `json:"client_id"`
-	Payload  []byte      `json:"payload"`
+	Type        MessageType `json:"type"`
+	Source      Instance    `json:"source"`
+	Destination Instance    `json:"destination"`
+	ClientID    string      `json:"client_id"`
+	Payload     []byte      `json:"payload"`
 }

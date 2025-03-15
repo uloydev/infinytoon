@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"github.com/spf13/viper"
@@ -20,7 +20,7 @@ type Config struct {
 func InitConfig(appCtx *appctx.AppContext) *Config {
 	cfg := Config{}
 	viper.SetConfigName("config")
-	viper.AddConfigPath(".")
+	viper.AddConfigPath("config")
 	viper.SetConfigType("yaml")
 
 	if err := viper.ReadInConfig(); err != nil {

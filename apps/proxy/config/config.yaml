@@ -1,0 +1,23 @@
+app_name: "proxy"
+app_version: "0.1.0"
+app_env: "development"
+
+clients: 
+  - name: "relay-client"
+    ip: "127.0.0.1"
+    port: 13371
+
+http_proxy:
+  name: "relay-http-proxy"
+  host: "127.0.0.1"
+  port: 1337
+  base_path: ""
+
+logger:
+  output: "console"
+  level: "debug"
+  # file_path: "logs/relay.log"
+  # max_size: 100
+  # max_backups: 7
+  # max_age: 7
+  # compress: false

@@ -43,4 +43,5 @@ require (
 	golang.org/x/sys v0.29.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/tools v0.22.0 // indirect
+	resty.dev/v3 v3.0.0-beta.2 // indirect
 )

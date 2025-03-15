@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"os"
 
+	"infinitoon.dev/infinitoon/apps/proxy/config"
 	"infinitoon.dev/infinitoon/pkg/cmd"
 	"infinitoon.dev/infinitoon/pkg/container"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
@@ -17,15 +18,16 @@ import (
 
 func main() {
 	appCtx := appctx.NewAppContext()
-	cfg := InitConfig(appCtx)
+	cfg := config.InitConfig(appCtx)
 	log := logger.NewLogger(appCtx, cfg.Logger)
 
 	ctr := container.NewContainer(appCtx)
 
 	defer ctr.Shutdown()
 
+	quicClients := InitClients(appCtx)
 	ctr.RegisterCommand(cmd.NewQuicCommand(appCtx, cmd.QuicCommandConfig{
-		Clients: InitClients(appCtx),
+		Clients: quicClients,
 	}))
 
 	ctr.RegisterCommand(InitHttpProxy(appCtx))

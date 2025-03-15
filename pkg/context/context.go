@@ -10,6 +10,10 @@ type AppContext struct {
 	ctx context.Context
 }
 
+func GetGeneric[T any](appCtx *AppContext, key AppContextKey) T {
+	return appCtx.Get(key).(T)
+}
+
 func NewAppContext() *AppContext {
 	return &AppContext{
 		ctx: context.Background(),

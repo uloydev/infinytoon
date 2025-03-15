@@ -7,15 +7,21 @@ import (
 	"infinitoon.dev/infinitoon/pkg/cmd"
 	"infinitoon.dev/infinitoon/pkg/container"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
-	"infinitoon.dev/infinitoon/pkg/database"
+	"infinitoon.dev/infinitoon/pkg/logger"
 )
 
 func main() {
 	appCtx := appctx.NewAppContext()
-	db := database.NewMongoDB(appCtx, "mongodb://root:password@mongodb:27017/infinitoon?authSource=admin")
-	if err := db.Connect(); err != nil {
-		log.Fatal(err)
-	}
+	appCtx.Set(appctx.AppNameKey, "infinitoon website")
+	appCtx.Set(appctx.EnvironmentKey, "development")
+	logger.NewLogger(appCtx, logger.LoggerConfig{
+		Level:  "debug",
+		Output: "console",
+	})
+	// db := database.NewMongoDB(appCtx, "mongodb://root:password@mongodb:27017/infinitoon?authSource=admin")
+	// if err := db.Connect(); err != nil {
+	// 	log.Fatal(err)
+	// }
 	container := container.NewContainer(appCtx)
 	container.RegisterCommand(
 		cmd.NewRestCommand(appCtx, &cmd.RestCommandConfig{

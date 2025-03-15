@@ -3,8 +3,11 @@ package quictunnel
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log"
+	"time"
 
 	"github.com/quic-go/quic-go"
 	"infinitoon.dev/infinitoon/pkg/logger"
@@ -17,16 +20,33 @@ func sendMessage(
 	decoder *json.Decoder,
 	msg *packets.Message,
 ) (*packets.Message, error) {
-	if err := encoder.Encode(msg); err != nil {
-		return nil, err
-	}
-
 	var response packets.Message
-	if err := decoder.Decode(&response); err != nil {
-		return nil, err
-	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			// if encoder is nil, sleep for a while before retrying
+			if encoder == nil {
+				fmt.Println("retrying send message: encoder is nil")
+				time.Sleep(1 * time.Second)
+				continue
+			}
 
-	return &response, nil
+			if err := encoder.Encode(msg); err != nil {
+				fmt.Printf("retrying send message: %v\n", err)
+				// sleep for a while before retrying
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			if err := decoder.Decode(&response); err != nil {
+				return nil, errors.Join(err, errors.New("error decoding response"))
+			}
+
+			return &response, nil
+		}
+	}
 }
 
 func handleConnError(sess quic.Connection, err error) {

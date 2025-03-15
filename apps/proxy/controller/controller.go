@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"infinitoon.dev/infinitoon/apps/proxy/config"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
 	"infinitoon.dev/infinitoon/pkg/rest"
 )
@@ -15,12 +16,12 @@ type Controller struct {
 	ctrls []IController
 }
 
-func InitController(appCtx *appctx.AppContext) *Controller {
+func InitController(appCtx *appctx.AppContext, cfg *config.Config) *Controller {
 	return &Controller{
 		appCtx: appCtx,
 		ctrls: []IController{
 			// register all controllers here
-			NewRootController(appCtx),
+			NewRootController(appCtx, cfg),
 		},
 	}
 }

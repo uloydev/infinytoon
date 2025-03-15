@@ -25,4 +25,6 @@ const (
 	ValidatorKey AppContextKey = "validator"
 	// QuicTunnelKey is the key used to store the quic tunnel in the context.
 	QuicTunnelKey AppContextKey = "quic_tunnel"
+	// HttpForwarderKey is the key used to store the http forwarder in the context.
+	HttpForwarderKey AppContextKey = "http_forwarder"
 )
