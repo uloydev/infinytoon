@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	// "log"
 
@@ -10,9 +11,11 @@ import (
 	"github.com/rs/zerolog/log"
 	"infinitoon.dev/infinitoon/apps/relay/config"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
+	"infinitoon.dev/infinitoon/pkg/database"
 	"infinitoon.dev/infinitoon/pkg/logger"
 	"infinitoon.dev/infinitoon/pkg/quictunnel"
 	"infinitoon.dev/infinitoon/shared/packets"
+	"infinitoon.dev/infinitoon/shared/schema"
 )
 
 func RootHandler(appCtx *appctx.AppContext, conn quic.Connection, stream quic.Stream, encoder *json.Encoder, msg packets.Message) {
@@ -20,6 +23,7 @@ func RootHandler(appCtx *appctx.AppContext, conn quic.Connection, stream quic.St
 	log := appCtx.Get(appctx.LoggerKey).(*logger.Logger)
 	tun := appCtx.Get(appctx.QuicTunnelKey).(quictunnel.QuicTunnel)
 	srv := tun.GetServer(quictunnel.QuicServerKey(cfg.Server.Name))
+	kv := appCtx.Get(appctx.KVClientKey).(*database.KVClient)
 
 	log.Debug().Any("payload", msg).Msg("message received")
 	switch msg.Type {
@@ -40,9 +44,29 @@ func RootHandler(appCtx *appctx.AppContext, conn quic.Connection, stream quic.St
 			return
 		}
 
+		serveData := &schema.KVServeData{
+			ClientID:    msg.ClientID,
+			BaseURL:     "http://localhost:1337/" + msg.ClientID,
+			ConnectedAt: time.Now().Unix(),
+			Host:        rqPayload.Host,
+			Port:        rqPayload.Port,
+			Protocol:    packets.ProtocolHTTP,
+			Status:      schema.KVServeStatusConnected,
+			Stats:       schema.KVServeStats{},
+		}
+
+		log.Info().Any("serve_data", serveData).Msg("setting serve data")
+
 		srv.AddClientSession(msg.ClientID, conn)
 
-		payload := packets.NewServeRs(true, msg.ClientID, "http://localhost:1337/")
+		kvRes := kv.Client().Set(context.Background(), serveData.BaseURL, serveData, 0)
+		if kvRes.Err() != nil {
+			log.Error().Err(kvRes.Err()).Any("client", msg.ClientID).Msg("error setting kv data")
+			sendInvalidPayloadResponse(encoder, &msg)
+			return
+		}
+
+		payload := packets.NewServeRs(true, msg.ClientID, serveData.BaseURL)
 		resp, err := payload.Encode()
 		if err != nil {
 			log.Error().Err(err).Any("client", msg.ClientID).Msg("error encoding serve response")
@@ -59,13 +83,28 @@ func RootHandler(appCtx *appctx.AppContext, conn quic.Connection, stream quic.St
 			return
 		}
 
-		rqPayload.Header["Host"] = "localhost:3000"
-		rqPayload.Host = "localhost:3000"
+		srvData := &schema.KVServeData{}
+
+		status := kv.Client().Get(context.Background(), rqPayload.BaseURL)
+		if status.Err() != nil {
+			log.Error().Err(status.Err()).Msg("error getting serve data")
+			sendInvalidPayloadResponse(encoder, &msg)
+			return
+		}
+
+		if err := status.Scan(srvData); err != nil {
+			log.Error().Err(err).Msg("error scanning serve data")
+			sendInvalidPayloadResponse(encoder, &msg)
+			return
+		}
+
+		rqPayload.Host = srvData.Host + ":" + srvData.Port
+		rqPayload.Header["Host"] = rqPayload.Host
 
 		msg, _ := rqPayload.Encode()
 
 		log.Info().Any("payload", rqPayload).Msg("sending http request payload to cli client")
-		resp, err := srv.SendMessage(context.Background(), "cli-relay-client", msg)
+		resp, err := srv.SendMessage(context.Background(), srvData.ClientID, msg)
 		if err != nil {
 			log.Error().Err(err).Msg("error sending message to cli-relay-client")
 			sendInvalidPayloadResponse(encoder, msg)

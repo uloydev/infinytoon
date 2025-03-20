@@ -2,26 +2,33 @@ package controller
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"infinitoon.dev/infinitoon/apps/proxy/config"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
+	"infinitoon.dev/infinitoon/pkg/database"
 	"infinitoon.dev/infinitoon/pkg/logger"
 	"infinitoon.dev/infinitoon/pkg/quictunnel"
 	"infinitoon.dev/infinitoon/pkg/rest"
 	"infinitoon.dev/infinitoon/shared/packets"
+	"infinitoon.dev/infinitoon/shared/schema"
 )
 
 type RootController struct {
 	appCtx *appctx.AppContext
+	kv     *database.KVClient
 	log    *logger.Logger
 	cfg    *config.Config
 	tun    quictunnel.QuicTunnel
 }
 
-func NewRootController(appCtx *appctx.AppContext, cfg *config.Config) IController {
+func NewRootController(appCtx *appctx.AppContext, cfg *config.Config, kv *database.KVClient) IController {
 	return &RootController{
 		appCtx: appCtx,
+		kv:     kv,
 		log:    appCtx.Get(appctx.LoggerKey).(*logger.Logger),
 		tun:    appCtx.Get(appctx.QuicTunnelKey).(quictunnel.QuicTunnel),
 		cfg:    cfg,
@@ -36,6 +43,35 @@ func (c *RootController) Route() *rest.RestRoute {
 	return route
 }
 
+var ErrInvalidPath = errors.New("invalid path")
+
+func getBaseURL(ctx *fiber.Ctx) (string, string, error) {
+	path := ctx.Path()
+	fmt.Println("path", path)
+	if path == "" {
+		return "", "", ErrInvalidPath
+	}
+
+	pathArr := strings.Split(path, "/")
+	if len(pathArr) < 2 {
+		return "", "", ErrInvalidPath
+	}
+
+	path = "/" + pathArr[1]
+
+	return ctx.BaseURL() + path, "/" + strings.TrimLeft(ctx.Path(), path), nil
+}
+
+func (c *RootController) serveDataExists(baseUrl string) bool {
+	cmd := c.kv.Client().Exists(context.Background(), baseUrl)
+	if cmd.Err() != nil {
+		c.log.Error().Err(cmd.Err()).Msg("error checking if serve data exists")
+		return false
+	}
+
+	return cmd.Val() == 1
+}
+
 func (c *RootController) rootHandler(ctx *fiber.Ctx) error {
 	c.log.Info().Str("url", ctx.OriginalURL()).Str("method", ctx.Method()).Msg("http request received")
 
@@ -46,12 +82,46 @@ func (c *RootController) rootHandler(ctx *fiber.Ctx) error {
 	})
 	queryParam := ctx.Queries()
 
+	baseURL, path, err := getBaseURL(ctx)
+	c.log.Info().Str("base_url", baseURL).Msg("base url")
+	if err != nil {
+		c.log.Error().Err(err).Msg("error getting base url")
+		return ctx.Status(fiber.StatusBadRequest).SendString(err.Error())
+	}
+
+	if !c.serveDataExists(baseURL) {
+		c.log.Error().Str("base_url", baseURL).Msg("serve data not found")
+		return ctx.Status(fiber.StatusNotFound).SendString("serve data not found")
+	}
+
+	srvData := &schema.KVServeData{}
+	cmd := c.kv.Client().Get(context.Background(), baseURL)
+	if cmd.Err() != nil {
+		c.log.Error().Err(cmd.Err()).Msg("error getting serve data")
+		return ctx.Status(fiber.StatusInternalServerError).SendString("error getting serve data")
+	}
+
+	if err := cmd.Scan(srvData); err != nil {
+		c.log.Error().Err(err).Msg("error scanning serve data")
+		return ctx.Status(fiber.StatusInternalServerError).SendString("error scanning serve data")
+	}
+
+	srvData.Stats.RequestCount++
+	srvData.Stats.BytesReceived += int64(len(bodyRaw))
+
+	status := c.kv.Client().Set(context.Background(), baseURL, srvData, 0)
+	if status.Err() != nil {
+		c.log.Error().Err(status.Err()).Msg("error setting serve data")
+		return ctx.Status(fiber.StatusInternalServerError).SendString("error setting serve data")
+	}
+
 	rq := packets.HttpRq{
+		BaseURL: baseURL,
 		BaseHttpPayload: packets.BaseHttpPayload{
 			Protocol: packets.HttpProtocol(ctx.Protocol()),
 			Method:   ctx.Method(),
 			Host:     ctx.Hostname(),
-			Path:     ctx.Path(),
+			Path:     path,
 			Queries:  queryParam,
 			Body:     bodyRaw,
 			Header:   headers,
@@ -91,6 +161,24 @@ func (c *RootController) rootHandler(ctx *fiber.Ctx) error {
 
 	for key, value := range rs.Header {
 		ctx.Set(key, value)
+	}
+
+	cmd = c.kv.Client().Get(context.Background(), baseURL)
+	if cmd.Err() != nil {
+		c.log.Error().Err(cmd.Err()).Msg("error getting serve data")
+		return ctx.Status(fiber.StatusInternalServerError).SendString("error getting serve data")
+	}
+
+	if err := cmd.Scan(srvData); err != nil {
+		c.log.Error().Err(err).Msg("error scanning serve data")
+		return ctx.Status(fiber.StatusInternalServerError).SendString("error scanning serve data")
+	}
+
+	srvData.Stats.BytesSent += int64(len(rs.Body))
+	status = c.kv.Client().Set(context.Background(), baseURL, srvData, 0)
+	if status.Err() != nil {
+		c.log.Error().Err(status.Err()).Msg("error setting serve data")
+		return ctx.Status(fiber.StatusInternalServerError).SendString("error setting serve data")
 	}
 
 	c.log.Info().Int("status_code", rs.StatusCode).Msg("sending http response")

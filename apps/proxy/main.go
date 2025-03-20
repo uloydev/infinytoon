@@ -13,6 +13,7 @@ import (
 	"infinitoon.dev/infinitoon/pkg/cmd"
 	"infinitoon.dev/infinitoon/pkg/container"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
+	"infinitoon.dev/infinitoon/pkg/database"
 	"infinitoon.dev/infinitoon/pkg/logger"
 )
 
@@ -22,6 +23,8 @@ func main() {
 	log := logger.NewLogger(appCtx, cfg.Logger)
 
 	ctr := container.NewContainer(appCtx)
+
+	database.NewKVClient(appCtx)
 
 	defer ctr.Shutdown()
 

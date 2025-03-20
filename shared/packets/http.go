@@ -21,6 +21,7 @@ type BaseHttpPayload struct {
 }
 
 type HttpRq struct {
+	BaseURL string `json:"base_url"`
 	BaseHttpPayload
 }
 

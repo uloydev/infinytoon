@@ -27,4 +27,6 @@ const (
 	QuicTunnelKey AppContextKey = "quic_tunnel"
 	// HttpForwarderKey is the key used to store the http forwarder in the context.
 	HttpForwarderKey AppContextKey = "http_forwarder"
+	// KVClientsKey is the key used to store the kv clients in the context.
+	KVClientKey AppContextKey = "kv_client"
 )

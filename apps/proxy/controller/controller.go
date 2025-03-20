@@ -3,6 +3,7 @@ package controller
 import (
 	"infinitoon.dev/infinitoon/apps/proxy/config"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
+	"infinitoon.dev/infinitoon/pkg/database"
 	"infinitoon.dev/infinitoon/pkg/rest"
 )
 
@@ -12,16 +13,18 @@ type IController interface {
 
 type Controller struct {
 	appCtx *appctx.AppContext
-
-	ctrls []IController
+	kv     *database.KVClient
+	ctrls  []IController
 }
 
 func InitController(appCtx *appctx.AppContext, cfg *config.Config) *Controller {
+	kv := database.GetKVClientFromCtx(appCtx)
 	return &Controller{
 		appCtx: appCtx,
+		kv:     kv,
 		ctrls: []IController{
 			// register all controllers here
-			NewRootController(appCtx, cfg),
+			NewRootController(appCtx, cfg, kv),
 		},
 	}
 }

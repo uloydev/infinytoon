@@ -334,6 +334,9 @@ func (qs *quicServer) DeleteClientSession(connKey string) {
 }
 
 func (qs *quicServer) AddClientSession(connKey string, conn quic.Connection) {
+	// delete existing client session
+	qs.DeleteClientSession(connKey)
+	// add new client session
 	qs.Clients.Store(connKey, conn)
 	qs.log.Debug().Any("server", qs.cfg.Name).Any("client", connKey).Any("addr", conn.RemoteAddr()).Msg("client session added")
 }
