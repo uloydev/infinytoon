@@ -23,7 +23,6 @@ type KVServeData struct {
 	Protocol       packets.HttpProtocol `json:"protocol"`
 	Status         KVServeStatus        `json:"status"`
 	Stats          KVServeStats         `json:"stats"`
-	SharedKey      []byte               `json:"shared_key"`
 }
 
 type KVServeStats struct {

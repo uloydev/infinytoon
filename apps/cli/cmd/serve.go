@@ -10,6 +10,7 @@ import (
 	"infinitoon.dev/infinitoon/apps/cli/config"
 	"infinitoon.dev/infinitoon/apps/cli/utils"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
+	"infinitoon.dev/infinitoon/pkg/encryption"
 	"infinitoon.dev/infinitoon/pkg/http_forwarder"
 	"infinitoon.dev/infinitoon/pkg/logger"
 	"infinitoon.dev/infinitoon/pkg/quictunnel"
@@ -46,7 +47,15 @@ var ServeCommand CommandFunc = func(appCtx *appctx.AppContext) *cobra.Command {
 			cmd.Printf("Serving your local http server to Internet securely with InfiniToon on %s:%s with subdomain %s\n", host, port, subdomain)
 
 			quicClient := quictunnel.NewQuicClient(appCtx, cfg.TunnelClient)
-			servePayload := packets.NewServeRq(host, port, cfg.TunnelClient.Name)
+
+			privKey, pubKey, err := encryption.GenerateECDHKeyPair()
+			if err != nil {
+				cmd.Println("Error: ", err)
+				return
+			}
+			sharedKey := make([]byte, 32)
+
+			servePayload := packets.NewServeRq(host, port, cfg.TunnelClient.Name, pubKey.Bytes())
 
 			// send serve request
 			serveRq, err := servePayload.Encode()
@@ -76,13 +85,38 @@ var ServeCommand CommandFunc = func(appCtx *appctx.AppContext) *cobra.Command {
 				return
 			}
 
+			serveRsPayload := &packets.ServeRs{}
+
+			if err := serveRsPayload.Decode(serveRs); err != nil {
+				cmd.Println("Error: ", err)
+				return
+			}
+
+			serverKey, err := encryption.BytesToEDCHPublicKey(serveRsPayload.ServerPublicKey)
+			if err != nil {
+				cmd.Println("Error: ", err)
+				return
+			}
+
+			// derive shared key
+			sharedKey, err = encryption.ComputeEDCHSharedSecret(privKey, serverKey)
+			if err != nil {
+				cmd.Println("Error: ", err)
+				return
+			}
+
+			// exchange key for end-to-end encryption success
+			log.Info().Msg("Successfully exchanged key for end-to-end encryption, your connection is now secure")
+
+			enc := encryption.NewEDCHEncryption(appCtx, sharedKey)
+
 			quicClient.Stream(context.Background(), func(ac *appctx.AppContext, c quic.Connection, s quic.Stream, e *json.Encoder, m packets.Message) {
 
 				log.Debug().Msgf("Received message: %s", m.Type)
 				switch m.Type {
 				case packets.HttpRequest:
 					httpPayload := &packets.HttpRq{}
-					err := httpPayload.Decode(&m)
+					err := httpPayload.DecryptAndDecode(enc, &m)
 					if err != nil {
 						cmd.Println("Error: ", err)
 						return
@@ -96,7 +130,7 @@ var ServeCommand CommandFunc = func(appCtx *appctx.AppContext) *cobra.Command {
 						return
 					}
 
-					rs, err := res.Encode()
+					rs, err := res.EncodeAndEncrypt(enc)
 					if err != nil {
 						cmd.Println("Error: ", err)
 						return

@@ -39,7 +39,7 @@ func (c *httpForwarder) Do(payload *packets.HttpRq) (res *packets.HttpRs, err er
 		SetURL(url).
 		SetBody(payload)
 
-	c.log.Info().Any("payload", payload).Msg("sending http request to client app")
+	c.log.Info().Str("host", payload.Host).Str("method", payload.Method).Str("path", payload.Path).Msg("sending http request to client app")
 	resp, err := req.Send()
 	if err != nil {
 		return nil, err

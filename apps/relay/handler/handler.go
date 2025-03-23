@@ -12,6 +12,7 @@ import (
 	"infinitoon.dev/infinitoon/apps/relay/config"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
 	"infinitoon.dev/infinitoon/pkg/database"
+	"infinitoon.dev/infinitoon/pkg/encryption"
 	"infinitoon.dev/infinitoon/pkg/logger"
 	"infinitoon.dev/infinitoon/pkg/quictunnel"
 	"infinitoon.dev/infinitoon/shared/packets"
@@ -44,6 +45,27 @@ func RootHandler(appCtx *appctx.AppContext, conn quic.Connection, stream quic.St
 			return
 		}
 
+		privKey, pubKey, err := encryption.GenerateECDHKeyPair()
+		if err != nil {
+			log.Error().Err(err).Msg("error generating ecdh key pair")
+			sendInvalidPayloadResponse(encoder, &msg)
+			return
+		}
+
+		clientKey, err := encryption.BytesToEDCHPublicKey(rqPayload.ClientPublicKey)
+		if err != nil {
+			log.Error().Err(err).Msg("error converting client public key")
+			sendInvalidPayloadResponse(encoder, &msg)
+			return
+		}
+
+		sharedKey, err := encryption.ComputeEDCHSharedSecret(privKey, clientKey)
+		if err != nil {
+			log.Error().Err(err).Msg("error computing shared secret")
+			sendInvalidPayloadResponse(encoder, &msg)
+			return
+		}
+
 		serveData := &schema.KVServeData{
 			ClientID:    msg.ClientID,
 			BaseURL:     "http://localhost:1337/" + msg.ClientID,
@@ -55,7 +77,9 @@ func RootHandler(appCtx *appctx.AppContext, conn quic.Connection, stream quic.St
 			Stats:       schema.KVServeStats{},
 		}
 
-		log.Info().Any("serve_data", serveData).Msg("setting serve data")
+		jsonData, _ := json.Marshal(serveData)
+
+		log.Info().Any("serve_data", string(jsonData)).Msg("setting serve data")
 
 		srv.AddClientSession(msg.ClientID, conn)
 
@@ -66,7 +90,14 @@ func RootHandler(appCtx *appctx.AppContext, conn quic.Connection, stream quic.St
 			return
 		}
 
-		payload := packets.NewServeRs(true, msg.ClientID, serveData.BaseURL)
+		kvRes = kv.Client().Set(context.Background(), "shared_key:"+msg.ClientID, sharedKey, 0)
+		if kvRes.Err() != nil {
+			log.Error().Err(kvRes.Err()).Any("client", msg.ClientID).Msg("error setting shared key")
+			sendInvalidPayloadResponse(encoder, &msg)
+			return
+		}
+
+		payload := packets.NewServeRs(true, msg.ClientID, serveData.BaseURL, pubKey.Bytes())
 		resp, err := payload.Encode()
 		if err != nil {
 			log.Error().Err(err).Any("client", msg.ClientID).Msg("error encoding serve response")
@@ -76,32 +107,53 @@ func RootHandler(appCtx *appctx.AppContext, conn quic.Connection, stream quic.St
 		sendSuccessResponse(encoder, resp)
 
 	case packets.HttpRequest:
+
+		kvRes := kv.Client().Get(context.Background(), "shared_key:"+msg.ClientID)
+		if kvRes.Err() != nil {
+			log.Error().Err(kvRes.Err()).Msg("error getting shared key")
+			sendInvalidPayloadResponse(encoder, &msg)
+			return
+		}
+
+		sharedKey, err := kvRes.Bytes()
+		if err != nil || len(sharedKey) == 0 {
+			log.Error().Err(err).Msg("error getting shared key")
+			sendInvalidPayloadResponse(encoder, &msg)
+			return
+		}
+
+		enc := encryption.NewEDCHEncryption(appCtx, sharedKey)
+
 		rqPayload := packets.HttpRq{}
-		if err := rqPayload.Decode(&msg); err != nil {
+		if err := rqPayload.DecryptAndDecode(enc, &msg); err != nil {
 			log.Error().Err(err).Msg("error decoding http request")
 			sendInvalidPayloadResponse(encoder, &msg)
 			return
 		}
 
 		srvData := &schema.KVServeData{}
-
-		status := kv.Client().Get(context.Background(), rqPayload.BaseURL)
-		if status.Err() != nil {
-			log.Error().Err(status.Err()).Msg("error getting serve data")
+		kvRes = kv.Client().Get(context.Background(), rqPayload.BaseURL)
+		if kvRes.Err() != nil {
+			log.Error().Err(kvRes.Err()).Msg("error getting serve data")
 			sendInvalidPayloadResponse(encoder, &msg)
 			return
 		}
 
-		if err := status.Scan(srvData); err != nil {
+		if err := kvRes.Scan(srvData); err != nil {
 			log.Error().Err(err).Msg("error scanning serve data")
 			sendInvalidPayloadResponse(encoder, &msg)
 			return
 		}
 
+		rqPayload.Protocol = srvData.Protocol
 		rqPayload.Host = srvData.Host + ":" + srvData.Port
 		rqPayload.Header["Host"] = rqPayload.Host
-
-		msg, _ := rqPayload.Encode()
+		msg, err := rqPayload.EncodeAndEncrypt(enc)
+		if err != nil {
+			log.Error().Err(err).Msg("error encoding http request")
+			sendInvalidPayloadResponse(encoder, msg)
+			return
+		}
 
 		log.Info().Any("payload", rqPayload).Msg("sending http request payload to cli client")
 		resp, err := srv.SendMessage(context.Background(), srvData.ClientID, msg)

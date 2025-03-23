@@ -3,7 +3,7 @@ package packets
 import "encoding/json"
 
 type EchoPayload struct {
-	BasePayload
+	*BasePayload
 	Message string `json:"message"`
 }
 
@@ -18,7 +18,7 @@ type EchoRs struct {
 func NewEchoRq(clientID string) Payload {
 	return &EchoRq{
 		EchoPayload: EchoPayload{
-			BasePayload: BasePayload{
+			BasePayload: &BasePayload{
 				ClientID: clientID,
 			},
 			Message: "echo request",
@@ -29,7 +29,7 @@ func NewEchoRq(clientID string) Payload {
 func NewEchoRs(clientID string) Payload {
 	return &EchoRs{
 		EchoPayload: EchoPayload{
-			BasePayload: BasePayload{
+			BasePayload: &BasePayload{
 				ClientID: clientID,
 			},
 			Message: "echo response",

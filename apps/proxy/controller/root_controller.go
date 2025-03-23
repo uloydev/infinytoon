@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"infinitoon.dev/infinitoon/apps/proxy/config"
 	appctx "infinitoon.dev/infinitoon/pkg/context"
 	"infinitoon.dev/infinitoon/pkg/database"
+	"infinitoon.dev/infinitoon/pkg/encryption"
 	"infinitoon.dev/infinitoon/pkg/logger"
 	"infinitoon.dev/infinitoon/pkg/quictunnel"
 	"infinitoon.dev/infinitoon/pkg/rest"
@@ -46,26 +48,41 @@ func (c *RootController) Route() *rest.RestRoute {
 var ErrInvalidPath = errors.New("invalid path")
 
 func getBaseURL(ctx *fiber.Ctx) (string, string, error) {
-	path := ctx.Path()
-	fmt.Println("path", path)
-	if path == "" {
+	oriPath := ctx.Path()
+	fmt.Println("oriPath", oriPath)
+	if oriPath == "" {
 		return "", "", ErrInvalidPath
 	}
 
-	pathArr := strings.Split(path, "/")
+	pathArr := strings.Split(oriPath, "/")
 	if len(pathArr) < 2 {
 		return "", "", ErrInvalidPath
 	}
 
-	path = "/" + pathArr[1]
+	path := "/" + pathArr[1]
 
-	return ctx.BaseURL() + path, "/" + strings.TrimLeft(ctx.Path(), path), nil
+	appPath, err := url.JoinPath("/", pathArr[2:]...)
+	if err != nil {
+		return "", "", err
+	}
+
+	return ctx.BaseURL() + path, appPath, nil
 }
 
 func (c *RootController) serveDataExists(baseUrl string) bool {
 	cmd := c.kv.Client().Exists(context.Background(), baseUrl)
 	if cmd.Err() != nil {
 		c.log.Error().Err(cmd.Err()).Msg("error checking if serve data exists")
+		return false
+	}
+
+	return cmd.Val() == 1
+}
+
+func (c *RootController) sharedKeyExists(clientID string) bool {
+	cmd := c.kv.Client().Exists(context.Background(), "shared_key:", clientID)
+	if cmd.Err() != nil {
+		c.log.Error().Err(cmd.Err()).Msg("error checking if shared key exists")
 		return false
 	}
 
@@ -106,8 +123,31 @@ func (c *RootController) rootHandler(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusInternalServerError).SendString("error scanning serve data")
 	}
 
+	c.log.Info().Str("client_id", srvData.ClientID).Msg("serve data found")
+
 	srvData.Stats.RequestCount++
 	srvData.Stats.BytesReceived += int64(len(bodyRaw))
+
+	if !c.sharedKeyExists(srvData.ClientID) {
+		c.log.Error().Msg("shared key not found")
+		return ctx.Status(fiber.StatusNotFound).SendString("shared key not found")
+	}
+
+	cmd = c.kv.Client().Get(context.Background(), "shared_key:"+srvData.ClientID)
+	if cmd.Err() != nil {
+		c.log.Error().Err(cmd.Err()).Msg("error getting shared key")
+		return ctx.Status(fiber.StatusInternalServerError).SendString("error getting shared key")
+	}
+
+	sharedKey, err := cmd.Bytes()
+	if err != nil || len(sharedKey) == 0 {
+		c.log.Error().Err(err).Msg("error getting shared key")
+		return ctx.Status(fiber.StatusInternalServerError).SendString("error getting shared key")
+	}
+
+	c.log.Info().Any("key_len", len(sharedKey)).Msg("shared key found")
+
+	enc := encryption.NewEDCHEncryption(c.appCtx, sharedKey)
 
 	status := c.kv.Client().Set(context.Background(), baseURL, srvData, 0)
 	if status.Err() != nil {
@@ -128,7 +168,9 @@ func (c *RootController) rootHandler(ctx *fiber.Ctx) error {
 		},
 	}
 
-	msg, err := rq.Encode()
+	rq.ClientID = srvData.ClientID
+
+	msg, err := rq.EncodeAndEncrypt(enc)
 	if err != nil {
 		c.log.Error().Err(err).Msg("error encoding http request")
 		return ctx.SendStatus(fiber.StatusInternalServerError)
@@ -154,7 +196,7 @@ func (c *RootController) rootHandler(ctx *fiber.Ctx) error {
 
 	rs := &packets.HttpRs{}
 
-	if err := rs.Decode(msg); err != nil {
+	if err := rs.DecryptAndDecode(enc, msg); err != nil {
 		c.log.Error().Err(err).Msg("error decoding http response")
 		return ctx.SendStatus(fiber.StatusInternalServerError)
 	}
